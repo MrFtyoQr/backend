@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { pool } from '../config/db.js';
 import { generateTokens, verifyRefreshToken } from '../middleware/auth.js';
 
@@ -230,6 +231,116 @@ export async function refreshToken(req, res) {
     }
 }
 
+// Solicitar recuperación de contraseña (envía token por email o lo devuelve en dev)
+export async function forgotPassword(req, res) {
+    try {
+        const { email } = req.body;
+
+        if (!email || typeof email !== 'string' || !email.trim()) {
+            return res.status(400).json({
+                success: false,
+                message: 'El correo es requerido'
+            });
+        }
+
+        const [users] = await pool.execute(
+            'SELECT user_id FROM users WHERE email = ?',
+            [email.trim().toLowerCase()]
+        );
+
+        // Por seguridad, siempre devolvemos el mismo mensaje (no revelar si el email existe)
+        const successMessage = 'Si el correo está registrado, recibirás instrucciones para restablecer tu contraseña.';
+
+        if (users.length === 0) {
+            return res.status(200).json({
+                success: true,
+                message: successMessage
+            });
+        }
+
+        const userId = users[0].user_id;
+        const token = crypto.randomBytes(32).toString('hex');
+        const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hora
+
+        await pool.execute(
+            'INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES (?, ?, ?)',
+            [userId, token, expiresAt]
+        );
+
+        // TODO: enviar email con enlace (ej: https://tuapp.com/reset-password?token=xxx)
+        // Por ahora en desarrollo puedes loguear el token para pruebas
+        if (process.env.NODE_ENV !== 'production') {
+            console.log('🔑 Password reset token for', email, ':', token);
+        }
+
+        res.status(200).json({
+            success: true,
+            message: successMessage,
+            ...(process.env.NODE_ENV !== 'production' && { data: { token } })
+        });
+    } catch (error) {
+        console.log('Error en forgot password:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error interno del servidor'
+        });
+    }
+}
+
+// Restablecer contraseña con token
+export async function resetPassword(req, res) {
+    try {
+        const { token, newPassword } = req.body;
+
+        if (!token || !newPassword) {
+            return res.status(400).json({
+                success: false,
+                message: 'Token y nueva contraseña son requeridos'
+            });
+        }
+
+        if (newPassword.length < 6) {
+            return res.status(400).json({
+                success: false,
+                message: 'La contraseña debe tener al menos 6 caracteres'
+            });
+        }
+
+        const [rows] = await pool.execute(
+            'SELECT user_id FROM password_reset_tokens WHERE token = ? AND expires_at > NOW()',
+            [token.trim()]
+        );
+
+        if (rows.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'El enlace ha expirado o no es válido. Solicita uno nuevo.'
+            });
+        }
+
+        const userId = rows[0].user_id;
+        const saltRounds = 12;
+        const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
+
+        await pool.execute(
+            'UPDATE users SET password_hash = ?, updated_at = NOW() WHERE user_id = ?',
+            [hashedPassword, userId]
+        );
+        await pool.execute('DELETE FROM password_reset_tokens WHERE token = ?', [token.trim()]);
+
+        res.status(200).json({
+            success: true,
+            message: 'Contraseña actualizada. Ya puedes iniciar sesión.'
+        });
+    } catch (error) {
+        console.log('Error en reset password:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error interno del servidor'
+        });
+    }
+}
+
 // Logout (opcional - principalmente para invalidar tokens en el cliente)
 export async function logoutUser(req, res) {
     try {
@@ -368,13 +479,21 @@ export async function getAIUsage(req, res) {
                 break;
         }
 
+        // Campos used/limit para la pantalla de chat (compatibilidad con la app móvil)
+        const chatLimit = subscriptionType === 'free' ? 3 : (subscriptionType === 'premium' ? 10 : 999999);
+        const chatUsed = subscriptionType === 'free'
+            ? (Number(req.user.aiQuestionsUsed) || 0)
+            : dailyChatCount;
+
         const usage = {
             subscriptionType,
             dailyAnalysisCount,
             weeklyAnalysisCount,
             dailyChatCount,
             limits,
-            remaining
+            remaining,
+            used: chatUsed,
+            limit: chatLimit
         };
 
         res.status(200).json({

@@ -55,6 +55,11 @@ async function getUserFinancialContext(userId) {
 
 // Función para enviar mensaje a OpenRouter
 async function sendToOpenRouter(message, context) {
+    const apiKey = process.env.OPENROUTER || process.env.OPENROUTER_API_KEY;
+    if (!apiKey || !apiKey.trim()) {
+        console.error('OPENROUTER: API key no configurada. Añade OPENROUTER=tu_key en .env');
+        throw new Error('Servicio de IA no configurado. Configura OPENROUTER en .env');
+    }
     try {
         const systemPrompt = `Eres un asistente financiero personal experto. Tienes acceso al contexto financiero del usuario:
 
@@ -86,15 +91,18 @@ Responde en español y sé conciso pero útil.`;
             temperature: 0.7
         }, {
             headers: {
-                'Authorization': `Bearer ${process.env.OPENROUTER}`,
-                'Content-Type': 'application/json'
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+                'HTTP-Referer': process.env.API_BASE_URL || 'http://localhost:5001',
+                'X-Title': 'Private Wallet'
             }
         });
 
         return response.data.choices[0].message.content;
     } catch (error) {
-        console.log('Error con OpenRouter:', error);
-        throw new Error('Error procesando consulta con IA');
+        const msg = error.response?.data?.error?.message || error.message;
+        console.log('Error con OpenRouter:', msg || error);
+        throw new Error(msg || 'Error procesando consulta con IA');
     }
 }
 
@@ -155,9 +163,10 @@ export async function chatWithAI(req, res) {
 
     } catch (error) {
         console.log('Error en chat con IA:', error);
-        res.status(500).json({
+        const isConfigError = error.message && error.message.includes('no configurado');
+        res.status(isConfigError ? 503 : 500).json({
             success: false,
-            message: 'Error procesando consulta con IA'
+            message: error.message || 'Error procesando consulta con IA'
         });
     }
 }

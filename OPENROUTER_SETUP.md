@@ -18,8 +18,8 @@ OpenRouter es un servicio que permite acceder a múltiples modelos de IA (como G
 Crea un archivo `.env` en la carpeta `backend/` con el siguiente contenido:
 
 ```env
-# OpenRouter AI Configuration
-OPENROUTER_API_KEY=tu_api_key_aqui
+# OpenRouter AI (obligatorio para chat y análisis con IA)
+OPENROUTER=tu_api_key_aqui
 
 # Otras variables necesarias
 DB_HOST=localhost

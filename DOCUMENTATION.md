@@ -311,7 +311,7 @@ npm run dev
 ## Notas de seguridad y configuraci�n (2025-10-23)
 - Configuraci�n de base de datos ahora depende de variables de entorno (`DATABASE_URL` o `DB_HOST`/`DB_USER`...).
 - Archivo `.env.example` agregado con placeholders para facilitar la rotaci�n de secretos.
-- Middleware de rate limiting combina IP y usuario autenticado cuando es posible y se degrada con mensajes claros si Upstash no est� disponible.
+- Middleware de rate limiting combina IP y usuario autenticado cuando es posible y se degrada con mensajes claros si Redis/Upstash (ahora en memoria) no est� disponible.
 - M�dulo de transacciones protegido por JWT y validaci�n de propiedad del recurso.
 - Consultas de analytics sanitizan el periodo solicitado y validan rangos de fechas personalizados.
 - Integraci�n con Stripe responde con errores controlados cuando no hay credenciales y pospone la verificaci�n de webhooks hasta contar con la configuraci�n segura.

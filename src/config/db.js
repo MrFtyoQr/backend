@@ -1,4 +1,5 @@
 import mysql from 'mysql2/promise';
+import bcrypt from 'bcryptjs';
 import 'dotenv/config';
 
 const getConfigFromDatabaseUrl = () => {
@@ -244,6 +245,34 @@ export async function initDB() {
             INSERT IGNORE INTO scraping_config (id, scraping_enabled, update_interval_minutes) 
             VALUES (1, TRUE, 60)
         `);
+
+    // Tabla para tokens de recuperación de contraseña
+    await pool.execute(`
+            CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id VARCHAR(255) NOT NULL,
+                token VARCHAR(255) NOT NULL UNIQUE,
+                expires_at TIMESTAMP NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_token (token),
+                INDEX idx_user_id (user_id),
+                INDEX idx_expires (expires_at)
+            )
+        `);
+
+    // Usuario de prueba para desarrollo (login: user_test / Password123)
+    const [existing] = await pool.execute(
+      "SELECT 1 FROM users WHERE user_id = 'user_test' LIMIT 1"
+    );
+    if (existing.length === 0) {
+      const hash = await bcrypt.hash('Password123', 12);
+      await pool.execute(
+        `INSERT INTO users (user_id, email, password_hash, subscription_type, ai_questions_used)
+         VALUES ('user_test', 'user_test@example.com', ?, 'free', 0)`,
+        [hash]
+      );
+      console.log('👤 Usuario de prueba creado: user_id=user_test, password=Password123');
+    }
 
     console.log('Database initialized successfully');
   } catch (error) {

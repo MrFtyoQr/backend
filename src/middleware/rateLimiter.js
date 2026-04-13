@@ -1,55 +1,57 @@
 import jwt from 'jsonwebtoken';
-import ratelimit from '../config/upstash.js';
+
+// Rate limiting en memoria (sin Redis). Límite: 60 peticiones por 60 segundos por IP/usuario.
+const windowMs = 60 * 1000;
+const maxPerWindow = 60;
+const store = new Map(); // identifier -> { count, resetAt }
+
+function getIdentifier(req) {
+  const forwardedFor = req.headers['x-forwarded-for'];
+  const clientIP = Array.isArray(forwardedFor)
+    ? forwardedFor[0]
+    : forwardedFor?.split(',')[0]?.trim() ||
+      req.ip ||
+      req.connection?.remoteAddress ||
+      req.socket?.remoteAddress ||
+      '127.0.0.1';
+
+  if (req.user?.userId) {
+    return `user:${req.user.userId}`;
+  }
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (token && process.env.JWT_SECRET) {
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      if (decoded?.userId) return `user:${decoded.userId}`;
+    } catch (_) {}
+  }
+  return `ip:${clientIP}`;
+}
 
 const rateLimiter = async (req, res, next) => {
-  if (!ratelimit) {
-    return next();
-  }
-
   try {
-    const forwardedFor = req.headers['x-forwarded-for'];
-    const clientIP = Array.isArray(forwardedFor)
-      ? forwardedFor[0]
-      : forwardedFor?.split(',')[0]?.trim() ||
-        req.ip ||
-        req.connection?.remoteAddress ||
-        req.socket?.remoteAddress ||
-        (req.connection?.socket ? req.connection.socket.remoteAddress : null) ||
-        '127.0.0.1';
+    const identifier = getIdentifier(req);
+    const now = Date.now();
+    let entry = store.get(identifier);
 
-    let identifier = `ip:${clientIP}`;
-
-    if (req.user?.userId) {
-      identifier = `user:${req.user.userId}`;
-    } else {
-      const authHeader = req.headers['authorization'];
-      const token = authHeader && authHeader.split(' ')[1];
-
-      if (token && process.env.JWT_SECRET) {
-        try {
-          const decoded = jwt.verify(token, process.env.JWT_SECRET);
-          if (decoded?.userId) {
-            identifier = `user:${decoded.userId}`;
-          }
-        } catch (error) {
-          // ignore token errors here; auth middleware will handle them when needed
-        }
-      }
+    if (!entry || now > entry.resetAt) {
+      entry = { count: 0, resetAt: now + windowMs };
+      store.set(identifier, entry);
     }
-
-    const { success, limit, remaining, reset } = await ratelimit.limit(identifier);
+    entry.count += 1;
 
     res.set({
-      'X-RateLimit-Limit': String(limit ?? ''),
-      'X-RateLimit-Remaining': String(remaining ?? ''),
-      'X-RateLimit-Reset': reset ? new Date(reset).toISOString() : '',
+      'X-RateLimit-Limit': String(maxPerWindow),
+      'X-RateLimit-Remaining': String(Math.max(0, maxPerWindow - entry.count)),
+      'X-RateLimit-Reset': new Date(entry.resetAt).toISOString(),
     });
 
-    if (!success) {
+    if (entry.count > maxPerWindow) {
       return res.status(429).json({
         success: false,
         message: 'Too many requests, please try again later.',
-        retryAfter: reset ? Math.round((reset - Date.now()) / 1000) : undefined,
+        retryAfter: Math.ceil((entry.resetAt - now) / 1000),
       });
     }
 

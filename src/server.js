@@ -1,8 +1,20 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
+import os from 'os';
 import { initDB } from './config/db.js';
 import rateLimiter from './middleware/rateLimiter.js';
+
+function getLocalIPs() {
+  const ifaces = os.networkInterfaces();
+  const ips = [];
+  for (const name of Object.keys(ifaces)) {
+    for (const iface of ifaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) ips.push(iface.address);
+    }
+  }
+  return ips;
+}
 
 import trascationsRoute from './routes/transactionsRoute.js';
 import authRoute from './routes/authRoute.js';
@@ -51,10 +63,16 @@ app.use('/api/investments', investmentRoute);
 app.use('/api/payments', paymentsRoute);
 
 initDB().then(() => {
-  const HOST = process.env.HOST || '0.0.0.0'; // Escuchar en todas las interfaces para permitir conexiones desde dispositivos en la red local
+  const HOST = process.env.HOST || '0.0.0.0';
   const server = app.listen(PORT, HOST, () => {
-    console.log(`🚀 Server is up and running on http://${HOST}:${PORT}`);
-    console.log(`📱 Accesible desde dispositivos en la red local: http://172.20.10.5:${PORT}`);
+    const ips = getLocalIPs();
+    console.log(`🚀 Server is up and running on http://0.0.0.0:${PORT}`);
+    if (ips.length) {
+      console.log(`📱 En la app Flutter usa hostIP = la IP de esta PC. Opciones: ${ips.join(', ')}`);
+      ips.forEach((ip) => console.log(`   → http://${ip}:${PORT}/api`));
+    } else {
+      console.log(`📱 En la app Flutter pon en api_constants.dart la IP de esta PC (ipconfig)`);
+    }
   });
 
   server.on('error', (err) => {
